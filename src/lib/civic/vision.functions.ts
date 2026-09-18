@@ -60,7 +60,7 @@ export const analyzeComplaintPhoto = createServerFn({ method: "POST" })
     });
 
     const result = await generateObject({
-      model: google("gemini-1.5-flash"),
+      model: google("gemini-3.8-flash"),
       system: SYSTEM,
       schema: analysisSchema,
       messages: [
