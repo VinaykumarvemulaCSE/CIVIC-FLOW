@@ -36,7 +36,7 @@ export interface AutomationConfig {
 const KEY = "civictriage.automation.v1";
 
 const DEFAULTS: AutomationConfig = {
-  triageWebhookUrl: "",
+  triageWebhookUrl: "https://vinaukumarvemula.app.n8n.cloud/webhook/civicflow-triage",
   sharedSecret: "",
   emailWebhookUrl: "",
   callbackWindowSec: 90,
