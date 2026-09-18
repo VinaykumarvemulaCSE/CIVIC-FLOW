@@ -18,7 +18,7 @@ import { signIn } from "@/lib/civic/store";
 import { findUser } from "@/lib/civic/users";
 import { getRules } from "@/lib/civic/rules";
 import { DEPARTMENTS, ZONES, type Department, type Role } from "@/lib/civic/types";
-import { auth, googleProvider } from "@/lib/civic/firebase";
+import { auth, googleProvider, firebaseReady } from "@/lib/civic/firebase";
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -105,13 +105,19 @@ function AuthPage() {
 
     setLoading(true);
     try {
-      if (mode === "signup") {
-        const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
-        await updateFirebaseProfile(userCredential.user, { displayName: name.trim() });
-        toast.success("Account created successfully");
+      if (auth) {
+        if (mode === "signup") {
+          const userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+          await updateFirebaseProfile(userCredential.user, { displayName: name.trim() });
+          toast.success("Account created successfully");
+        } else {
+          await signInWithEmailAndPassword(auth, email.trim(), password);
+          toast.success(`Welcome back!`);
+        }
       } else {
-        await signInWithEmailAndPassword(auth, email.trim(), password);
-        toast.success(`Welcome back!`);
+        toast.success(
+          mode === "signup" ? "Account created (demo mode)" : "Welcome back! (demo mode)",
+        );
       }
       
       // Update local store to maintain UI state
@@ -134,6 +140,11 @@ function AuthPage() {
   async function handleGoogleSignIn() {
     if (role === "admin") {
       toast.error("Admins must sign in with email and password.");
+      return;
+    }
+
+    if (!auth || !googleProvider) {
+      toast.error("Google sign-in needs the Firebase keys configured.");
       return;
     }
 
@@ -325,7 +336,7 @@ function AuthPage() {
                   {loading ? "Please wait..." : mode === "signup" ? `Create account as ${role}` : `Continue as ${role}`}
                 </Button>
                 
-                {role !== "admin" && (
+                {role !== "admin" && firebaseReady && (
                   <div className="mt-4 space-y-4">
                     <div className="relative">
                       <div className="absolute inset-0 flex items-center">

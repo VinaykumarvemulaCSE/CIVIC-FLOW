@@ -1,7 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { generateObject } from "ai";
 import { z } from "zod";
+
 
 /**
  * Image analysis agent.
@@ -52,70 +51,94 @@ Never invent details you cannot see in the photo.`;
 export const analyzeComplaintPhoto = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => inputSchema.parse(input))
   .handler(async ({ data }): Promise<PhotoAnalysis> => {
-    const key = process.env["OPENAI_API_KEY"];
-    if (!key) throw new Error("Image analysis is not configured (missing OPENAI_API_KEY)");
+    const key = process.env["LOVABLE_API_KEY"];
+    if (!key) throw new Error("Image analysis is not configured (missing LOVABLE_API_KEY)");
 
-    // Bypassing the AI API due to high demand/rate limits to ensure the demo works 100% of the time.
-    // We parse the text they typed and mock the image analysis to look perfectly realistic.
-    const text = (data.description + " " + data.title).toLowerCase();
-    
-    let category: any = "other";
-    let hazards = ["safety risk"];
-    let observed = "Observed damage from the provided photo matching the description.";
-    let severity: any = "medium";
-    let damageScore = 50;
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-6-astra",
+        reasoning: { effort: "low" },
+        instructions: SYSTEM,
+        input: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: `Citizen report title: ${data.title}\nDescription: ${data.description}\nAnalyse the attached photo.`,
+              },
+              { type: "input_image", image_url: data.image },
+            ],
+          },
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "photo_analysis",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "isRelevant",
+                "category",
+                "severity",
+                "damageScore",
+                "hazards",
+                "observed",
+                "confidence",
+              ],
+              properties: {
+                isRelevant: { type: "boolean" },
+                category: {
+                  type: "string",
+                  enum: [
+                    "pothole",
+                    "streetlight",
+                    "water_leakage",
+                    "garbage",
+                    "drainage",
+                    "traffic_signal",
+                    "other",
+                  ],
+                },
+                severity: { type: "string", enum: ["critical", "high", "medium", "low"] },
+                damageScore: { type: "number" },
+                hazards: { type: "array", items: { type: "string" } },
+                observed: { type: "string" },
+                confidence: { type: "number" },
+              },
+            },
+          },
+        },
+      }),
+    });
 
-    if (text.includes("pothole") || text.includes("road")) {
-      category = "pothole";
-      hazards = ["tripping hazard", "vehicle damage risk"];
-      observed = "Large pothole visible on the road surface causing obstruction.";
-      severity = "high";
-      damageScore = 85;
-    } else if (text.includes("water") || text.includes("leak") || text.includes("pipe")) {
-      category = "water_leakage";
-      hazards = ["slipping hazard", "water wastage", "infrastructure erosion"];
-      observed = "Significant water leakage visible flooding the immediate area.";
-      severity = "critical";
-      damageScore = 95;
-    } else if (text.includes("light") || text.includes("street")) {
-      category = "streetlight";
-      hazards = ["poor visibility", "accident risk at night"];
-      observed = "Streetlight is visibly broken or malfunctioning.";
-      severity = "medium";
-      damageScore = 60;
-    } else if (text.includes("garbage") || text.includes("trash") || text.includes("waste")) {
-      category = "garbage";
-      hazards = ["health hazard", "foul odor", "pest attraction"];
-      observed = "Pile of uncollected garbage blocking the public pathway.";
-      severity = "medium";
-      damageScore = 45;
-    } else if (text.includes("drain") || text.includes("sewer")) {
-      category = "drainage";
-      hazards = ["flooding risk", "sanitation issue"];
-      observed = "Drainage system is blocked, causing immediate water stagnation.";
-      severity = "high";
-      damageScore = 75;
-    } else if (text.includes("traffic") || text.includes("signal")) {
-      category = "traffic_signal";
-      hazards = ["traffic collision risk", "pedestrian danger"];
-      observed = "Traffic signal equipment is damaged and unreadable.";
-      severity = "critical";
-      damageScore = 100;
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Image analysis failed (${res.status}): ${detail.slice(0, 300)}`);
     }
 
-    const result: { object: PhotoAnalysis } = {
-      object: {
-        isRelevant: true,
-        category: category,
-        severity: severity,
-        damageScore: damageScore,
-        hazards: hazards,
-        observed: observed,
-        confidence: 0.98
-      }
+    const payload = (await res.json()) as {
+      output?: { type?: string; content?: { type?: string; text?: string }[] }[];
+      output_text?: string;
     };
+    const raw =
+      payload.output_text ??
+      payload.output
+        ?.flatMap((item) => item.content ?? [])
+        .filter((part) => part?.type === "output_text" && typeof part.text === "string")
+        .map((part) => part.text as string)
+        .join("") ??
+      "";
+    if (!raw.trim()) throw new Error("Image analysis returned no result");
 
-    const analysis = result.object;
+    const analysis = analysisSchema.parse(JSON.parse(raw));
     return {
       ...analysis,
       damageScore: Math.max(0, Math.min(100, Math.round(analysis.damageScore))),
