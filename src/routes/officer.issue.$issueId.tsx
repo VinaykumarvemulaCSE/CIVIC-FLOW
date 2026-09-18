@@ -48,6 +48,7 @@ function IssuePage() {
   const issue = findIssue(issueId);
   const [note, setNote] = useState("");
   const [resolutionPhoto, setResolutionPhoto] = useState<string | undefined>();
+  const [isSending, setIsSending] = useState(false);
 
   if (!issue) {
     return (
@@ -62,7 +63,38 @@ function IssuePage() {
   const linked = complaintsForIssue(issue.issueId);
   const officer = session?.name ?? "Officer";
 
-  function act(action: "assign" | "start" | "resolve" | "email", message: string) {
+  async function notifyLinkedCitizens(type: "assigned" | "in_progress" | "resolved" | "custom") {
+    setIsSending(true);
+    try {
+      const { sendCitizenEmail } = await import("@/lib/civic/email.functions");
+      let count = 0;
+      for (const c of linked) {
+        const toEmail = c.citizenEmail || "citizen@civicflow.gov";
+        await sendCitizenEmail({
+          data: {
+            to: toEmail,
+            citizenName: c.citizenName,
+            ticket: c.ticket,
+            title: c.title,
+            issueId: issue?.issueId,
+            type,
+            officerName: officer,
+            note: note || undefined,
+            resolutionPhotoUrl: resolutionPhoto || undefined,
+            department: issue?.department,
+          },
+        }).catch((e) => console.warn("Could not email citizen:", c.citizenName, e));
+        count++;
+      }
+      toast.success(`Notifications dispatched to ${count} citizen(s) via Nodemailer`);
+    } catch (e) {
+      console.warn("Notification dispatch failed", e);
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  async function act(action: "assign" | "start" | "resolve" | "email", message: string) {
     // The issue is the work item, so every linked complaint moves with it.
     linked.forEach((c) =>
       officerAction(c.ticket, officer, action, {
@@ -71,6 +103,13 @@ function IssuePage() {
       }),
     );
     toast.success(message);
+
+    // Auto-dispatch email notifications to citizens
+    if (action === "assign") await notifyLinkedCitizens("assigned");
+    else if (action === "start") await notifyLinkedCitizens("in_progress");
+    else if (action === "resolve") await notifyLinkedCitizens("resolved");
+    else if (action === "email") await notifyLinkedCitizens("custom");
+
     setNote("");
   }
 

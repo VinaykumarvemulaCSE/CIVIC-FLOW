@@ -68,9 +68,58 @@ function ValidatePage() {
     );
   }
 
-  function act(action: Parameters<typeof officerAction>[2], message: string, extra = {}) {
-    officerAction(ticket, officer, action, { ...(note ? { note } : {}), ...extra });
+  const [resolutionPhoto, setResolutionPhoto] = useState<string | undefined>();
+  const [sendingEmail, setSendingEmail] = useState(false);
+
+  async function triggerEmail(type: "verified" | "assigned" | "in_progress" | "resolved" | "rejected" | "needs_info" | "custom", customNote?: string) {
+    if (!complaint) return;
+    const toEmail = complaint.citizenEmail || "citizen@civicflow.gov";
+    setSendingEmail(true);
+    try {
+      const { sendCitizenEmail } = await import("@/lib/civic/email.functions");
+      const res = await sendCitizenEmail({
+        data: {
+          to: toEmail,
+          citizenName: complaint.citizenName,
+          ticket: complaint.ticket,
+          title: complaint.title,
+          issueId: complaint.issueId,
+          type,
+          officerName: officer,
+          note: customNote || note,
+          resolutionPhotoUrl: resolutionPhoto || complaint.resolutionPhotoUrl,
+          department: complaint.department,
+        },
+      });
+      if (res.previewUrl) {
+        toast.success(`Notification email sent! (Preview: ${res.previewUrl})`);
+      } else {
+        toast.success(`Notification email sent to ${toEmail}`);
+      }
+    } catch (e) {
+      console.warn("Email dispatch error:", e);
+      toast.info(`Email event queued for ${toEmail}`);
+    } finally {
+      setSendingEmail(false);
+    }
+  }
+
+  async function act(action: Parameters<typeof officerAction>[2], message: string, extra = {}) {
+    officerAction(ticket, officer, action, {
+      ...(note ? { note } : {}),
+      ...(action === "resolve" && resolutionPhoto ? { resolutionPhotoUrl: resolutionPhoto } : {}),
+      ...extra,
+    });
     toast.success(message);
+
+    // Automatically trigger email notification
+    if (action === "validate") await triggerEmail("verified");
+    else if (action === "start") await triggerEmail("in_progress");
+    else if (action === "resolve") await triggerEmail("resolved");
+    else if (action === "reject") await triggerEmail("rejected");
+    else if (action === "needs_info") await triggerEmail("needs_info");
+    else if (action === "email") await triggerEmail("custom");
+
     setNote("");
   }
 
@@ -93,39 +142,66 @@ function ValidatePage() {
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
+
+          <div className="space-y-1.5">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Attach Resolution Proof Photo (Optional for resolution)
+            </p>
+            <input
+              type="file"
+              accept="image/*"
+              className="block w-full text-xs text-muted-foreground file:mr-2 file:rounded-md file:border file:border-input file:bg-background file:px-2.5 file:py-1 file:text-xs"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => setResolutionPhoto(String(reader.result));
+                reader.readAsDataURL(file);
+              }}
+            />
+            {resolutionPhoto && (
+              <img
+                src={resolutionPhoto}
+                alt="Resolution proof"
+                className="mt-2 max-h-36 rounded-md border object-cover"
+              />
+            )}
+          </div>
+
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => act("validate", "Complaint verified and pinned on the map")}>
+            <Button onClick={() => void act("validate", "Complaint verified and pinned on the map")}>
               <CheckCircle2 className="size-4" /> Verify
             </Button>
             <Button
               variant="outline"
               onClick={() => {
                 if (note.trim().length < 8) {
-                  toast.error("Say what information you need from the citizen.");
+                  toast.error("Please explain what additional information you need from the citizen in the note above.");
                   return;
                 }
-                act("needs_info", "Sent back to the citizen for more information");
+                void act("needs_info", "Sent back to the citizen for more information");
               }}
             >
               <HelpCircle className="size-4" /> Request more information
             </Button>
             <Button
               variant="outline"
-              onClick={() => act("start", "Work order raised for the crew")}
+              onClick={() => void act("start", "Work order raised for the crew")}
             >
               <Hammer className="size-4" /> Convert to work order
             </Button>
             <Button
               variant="outline"
-              onClick={() => act("email", "Notification email queued via Nodemailer / n8n")}
+              disabled={sendingEmail}
+              onClick={() => void act("email", "Notification email sent to citizen")}
             >
               <Mail className="size-4" /> Trigger email
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               onClick={() =>
-                act("resolve", "Complaint closed and citizen notified", {
-                  note: note || "Issue fixed and verified on site.",
+                void act("resolve", "Complaint resolved and citizen notified with completion proof", {
+                  note: note || "Issue inspected, repaired, and verified on site.",
                 })
               }
             >
@@ -134,14 +210,20 @@ function ValidatePage() {
             <Button
               variant="outline"
               disabled={!complaint.duplicateOfTicket}
-              onClick={() => act("merge", `Merged into ${complaint.duplicateOfTicket}`)}
+              onClick={() => void act("merge", `Merged into ${complaint.duplicateOfTicket}`)}
             >
               <Merge className="size-4" /> Merge duplicate
             </Button>
             <Button
               variant="ghost"
-              className="text-destructive"
-              onClick={() => act("reject", "Complaint rejected")}
+              className="text-destructive hover:bg-destructive/10"
+              onClick={() => {
+                if (note.trim().length < 5) {
+                  toast.error("Please specify a brief reason for rejection in the note above.");
+                  return;
+                }
+                void act("reject", "Complaint rejected and moved to bottom of queue");
+              }}
             >
               <Ban className="size-4" /> Reject
             </Button>

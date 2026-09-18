@@ -44,7 +44,13 @@ function OfficerQueue() {
     .filter((c) =>
       q ? `${c.title} ${c.ticket} ${c.address}`.toLowerCase().includes(q.toLowerCase()) : true,
     )
-    .sort((a, b) => b.priorityScore - a.priorityScore);
+    .sort((a, b) => {
+      // Push rejected complaints to the bottom of the queue
+      const aRejected = a.status === "rejected" ? 1 : 0;
+      const bRejected = b.status === "rejected" ? 1 : 0;
+      if (aRejected !== bRejected) return aRejected - bRejected;
+      return b.priorityScore - a.priorityScore;
+    });
 
   const pending = queue.filter(
     (c) => c.status === "awaiting_validation" || c.status === "triaging",
