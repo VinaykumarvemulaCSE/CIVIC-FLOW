@@ -20,6 +20,7 @@ import {
   type SafetyRisk,
   type Severity,
 } from "./types";
+import type { PhotoAnalysis } from "./vision.functions";
 
 /**
  * Agent orchestration bridge.
@@ -191,20 +192,40 @@ function finish(ticket: string, source: string) {
 
 async function analysePhoto(complaint: Complaint) {
   const rules = getRules();
-  if (!complaint.photoUrl || !rules.useVision || !complaint.photoUrl.startsWith("data:")) {
+  if (!complaint.photoUrl || !rules.useVision) {
     return { vision: undefined, error: undefined as string | undefined };
   }
   markRunning(complaint.ticket, "review", "Reading the photo…");
   try {
+    let imageUrl = complaint.photoUrl;
+    // If it's a blob url, convert it to base64 data url for the server function
+    if (imageUrl.startsWith("blob:")) {
+      try {
+        const resp = await fetch(imageUrl);
+        const blob = await resp.blob();
+        const reader = new FileReader();
+        imageUrl = await new Promise<string>((resolve, reject) => {
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (e) {
+        console.warn("Could not read blob url as base64", e);
+      }
+    }
+
     const { analyzeComplaintPhoto } = await import("./vision.functions");
-    const vision = await analyzeComplaintPhoto({
+    const vision = (await analyzeComplaintPhoto({
       data: {
-        image: complaint.photoUrl,
+        image: imageUrl,
         title: complaint.title,
         description: complaint.description,
       },
-    });
-    patchComplaint(complaint.ticket, () => ({ vision }));
+    })) as PhotoAnalysis;
+    
+    if (vision) {
+      patchComplaint(complaint.ticket, () => ({ vision }));
+    }
     return { vision, error: undefined };
   } catch (error) {
     console.error("photo analysis failed", error);
