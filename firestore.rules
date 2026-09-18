@@ -1,0 +1,87 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+  
+    // Helper functions for Role-Based Access Control (RBAC)
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    function isUser(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+    
+    // Admin checking: Check if the user's email is the master admin, or if they have the admin role in the DB
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'kumarvinay072007@gmail.com' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+    
+    // Officer checking
+    function isOfficer() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'officer';
+    }
+
+    // Citizens (Any authenticated user who isn't explicitly an admin or officer is effectively a citizen, 
+    // but we can check the database specifically if we want)
+    function isCitizen() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'citizen';
+    }
+
+    // 1. Users Collection
+    match /users/{userId} {
+      // Users can read/write their own profile
+      allow read, write: if isUser(userId);
+      // Admins can read/write all profiles (for suspensions, role changes, etc.)
+      allow read, write: if isAdmin();
+      // Officers might need to read user profiles occasionally
+      allow read: if isOfficer();
+    }
+
+    // 2. Complaints Collection
+    match /complaints/{complaintId} {
+      // Admins can see and edit everything
+      allow read, write: if isAdmin();
+      
+      // Officers can see and edit everything
+      allow read, write: if isOfficer();
+      
+      // Citizens can create complaints, and read/update their own complaints
+      // They can only create a complaint if they set the authorId to their own UID
+      allow create: if isCitizen() && request.resource.data.authorId == request.auth.uid;
+      allow read, update: if isCitizen() && resource.data.authorId == request.auth.uid;
+      
+      // Note: If you want complaints to be public (e.g. public map), you might allow read for everyone:
+      // allow read: if true;
+    }
+    
+    // 3. Triage Rules Collection
+    match /rules/{ruleDoc} {
+      // Anyone can read the rules (needed for the client-side rule engine)
+      allow read: if true;
+      // Only admins can update the rules
+      allow write: if isAdmin();
+    }
+    
+    // 4. Issues, Logs, and Audit Collections (for Migration & System features)
+    match /issues/{issueId} {
+      allow read: if true;
+      allow write: if isAdmin() || isOfficer();
+    }
+    
+    match /logs/{logId} {
+      allow read, write: if isAdmin();
+    }
+    
+    match /audit/{auditId} {
+      allow read, write: if isAdmin();
+    }
+    
+    // 5. Default fallback: Deny everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
