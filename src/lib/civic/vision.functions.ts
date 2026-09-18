@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { streamText, Output } from "ai";
 import { z } from "zod";
 
@@ -52,17 +52,15 @@ Never invent details you cannot see in the photo.`;
 export const analyzeComplaintPhoto = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => inputSchema.parse(input))
   .handler(async ({ data }): Promise<PhotoAnalysis> => {
-    const key = process.env["LOVABLE_API_KEY"];
-    if (!key) throw new Error("Image analysis is not configured (missing LOVABLE_API_KEY)");
+    const key = process.env["OPENAI_API_KEY"];
+    if (!key) throw new Error("Image analysis is not configured (missing OPENAI_API_KEY)");
 
-    const lovable = createOpenAI({
-      baseURL: "https://ai.gateway.lovable.dev/v1",
+    const google = createGoogleGenerativeAI({
       apiKey: key,
-      headers: { "Lovable-API-Key": key, "X-Lovable-AIG-SDK": "vercel-ai-sdk" },
     });
 
     const result = streamText({
-      model: lovable.responses("openai/gpt-6-astra"),
+      model: google("gemini-1.5-flash"),
       system: SYSTEM,
       output: Output.object({ schema: analysisSchema }),
       messages: [
@@ -76,16 +74,7 @@ export const analyzeComplaintPhoto = createServerFn({ method: "POST" })
             { type: "image", image: new URL(data.image) },
           ],
         },
-      ],
-      providerOptions: {
-        openai: {
-          forceReasoning: true,
-          reasoningEffort: "low",
-          reasoningSummary: "auto",
-          store: false,
-          include: ["reasoning.encrypted_content"],
-        },
-      },
+      ]
     });
 
     const analysis = await result.output;
