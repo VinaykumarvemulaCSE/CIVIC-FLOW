@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { streamText, Output } from "ai";
+import { generateObject } from "ai";
 import { z } from "zod";
 
 /**
@@ -59,10 +59,10 @@ export const analyzeComplaintPhoto = createServerFn({ method: "POST" })
       apiKey: key,
     });
 
-    const result = streamText({
+    const result = await generateObject({
       model: google("gemini-1.5-flash"),
       system: SYSTEM,
-      output: Output.object({ schema: analysisSchema }),
+      schema: analysisSchema,
       messages: [
         {
           role: "user",
@@ -77,7 +77,7 @@ export const analyzeComplaintPhoto = createServerFn({ method: "POST" })
       ]
     });
 
-    const analysis = await result.output;
+    const analysis = result.object;
     return {
       ...analysis,
       damageScore: Math.max(0, Math.min(100, Math.round(analysis.damageScore))),
